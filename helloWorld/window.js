@@ -11,6 +11,11 @@ let sandboxReady = false;
 let mediapipeReady = false;
 let processingFrame = false;
 
+const SCROLL_COOLDOWN_MS = 600;
+const CLOSE_TAB_COOLDOWN_MS = 2000;
+let lastScrollTime = 0;
+let lastCloseTime = 0;
+
 // Helper to run code in the active tab
 function runInActiveTab(code) {
   chrome.tabs.query({ active: true }, (tabs) => {
@@ -60,6 +65,45 @@ window.addEventListener('message', (event) => {
   }
 });
 
+// Detect gestures and trigger tab actions
+function detectGestures(multiHandLandmarks) {
+  const now = Date.now();
+  const handCount = multiHandLandmarks.length;
+
+  // Two hands → close the current tab (with cooldown to prevent accidental triggers)
+  if (handCount >= 2) {
+    if (now - lastCloseTime > CLOSE_TAB_COOLDOWN_MS) {
+      lastCloseTime = now;
+      statusDiv.textContent = "Two hands detected — closing tab!";
+      chrome.tabs.query({ active: true }, (tabs) => {
+        const browserTab = tabs.find(tab =>
+          !tab.url.startsWith('chrome-extension://') &&
+          !tab.url.startsWith('chrome://')
+        );
+        if (browserTab) chrome.tabs.remove(browserTab.id);
+      });
+    }
+    return;
+  }
+
+  // One hand → check majority position for scroll
+  if (handCount === 1 && now - lastScrollTime > SCROLL_COOLDOWN_MS) {
+    const landmarks = multiHandLandmarks[0];
+    const bottomCount = landmarks.filter(lm => lm.y > 0.5).length;
+    const topCount = landmarks.length - bottomCount;
+
+    if (bottomCount > topCount) {
+      lastScrollTime = now;
+      statusDiv.textContent = "Hand in bottom half — scrolling down";
+      runInActiveTab(() => window.scrollBy({ top: 300, behavior: 'smooth' }));
+    } else if (topCount > bottomCount) {
+      lastScrollTime = now;
+      statusDiv.textContent = "Hand in top half — scrolling up";
+      runInActiveTab(() => window.scrollBy({ top: -300, behavior: 'smooth' }));
+    }
+  }
+}
+
 // Draw hand landmarks
 function drawResults(results) {
   canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
@@ -98,7 +142,7 @@ function drawResults(results) {
       }
     }
 
-    statusDiv.textContent = `Hand detected: ${results.multiHandLandmarks.length} hand(s)`;
+    detectGestures(results.multiHandLandmarks);
   } else {
     statusDiv.textContent = "No hands detected";
   }
