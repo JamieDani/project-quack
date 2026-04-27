@@ -12,9 +12,9 @@ let mediapipeReady = false;
 let processingFrame = false;
 
 const SCROLL_COOLDOWN_MS = 600;
-const CLOSE_TAB_COOLDOWN_MS = 2000;
+const CLOSE_TAB_HOLD_MS = 5000;
 let lastScrollTime = 0;
-let lastCloseTime = 0;
+let twoHandsFirstSeen = null;
 
 // Helper to run code in the active tab
 function runInActiveTab(code) {
@@ -70,11 +70,14 @@ function detectGestures(multiHandLandmarks) {
   const now = Date.now();
   const handCount = multiHandLandmarks.length;
 
-  // Two hands → close the current tab (with cooldown to prevent accidental triggers)
+  // Two hands → must be held for 5 seconds before closing the tab
   if (handCount >= 2) {
-    if (now - lastCloseTime > CLOSE_TAB_COOLDOWN_MS) {
-      lastCloseTime = now;
-      statusDiv.textContent = "Two hands detected — closing tab!";
+    if (twoHandsFirstSeen === null) twoHandsFirstSeen = now;
+    const heldMs = now - twoHandsFirstSeen;
+    const remaining = Math.ceil((CLOSE_TAB_HOLD_MS - heldMs) / 1000);
+    if (heldMs >= CLOSE_TAB_HOLD_MS) {
+      twoHandsFirstSeen = null;
+      statusDiv.textContent = "Closing tab!";
       chrome.tabs.query({ active: true }, (tabs) => {
         const browserTab = tabs.find(tab =>
           !tab.url.startsWith('chrome-extension://') &&
@@ -82,9 +85,14 @@ function detectGestures(multiHandLandmarks) {
         );
         if (browserTab) chrome.tabs.remove(browserTab.id);
       });
+    } else {
+      statusDiv.textContent = `Both hands held — closing in ${remaining}s`;
     }
     return;
   }
+
+  // Reset the hold timer if hands drop below 2
+  twoHandsFirstSeen = null;
 
   // One hand → check majority position for scroll
   if (handCount === 1 && now - lastScrollTime > SCROLL_COOLDOWN_MS) {
